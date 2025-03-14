@@ -1,19 +1,16 @@
 package com.teknologiinformasi.restapi.order.controller;
 
+import java.util.UUID;
+import org.axonframework.commandhandling.gateway.CommandGateway;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.RestTemplate;
 
-import com.teknologiinformasi.restapi.order.event.OrderCreatedEvent;
-import com.teknologiinformasi.restapi.order.model.Order;
-import com.teknologiinformasi.restapi.order.model.OrderResponse;
-import com.teknologiinformasi.restapi.order.model.Produk;
-import com.teknologiinformasi.restapi.order.service.OrderMessageProducer;
-import com.teknologiinformasi.restapi.order.service.OrderService;
-
-import java.time.LocalDateTime;
-import java.util.List;
+import com.teknologiinformasi.restapi.order.command.CreateOrderCommand;
+import com.teknologiinformasi.restapi.order.command.UpdateOrderCommand;
+import com.teknologiinformasi.restapi.order.model.CreateOrderRequest;
+import com.teknologiinformasi.restapi.order.model.OrderSummary;
+import com.teknologiinformasi.restapi.order.model.UpdateOrderRequest;
+import com.teknologiinformasi.restapi.order.repository.OrderSummaryRepository;
 
 
 
@@ -24,84 +21,33 @@ public class OrderController {
 
 
    @Autowired
-   private OrderService orderService;
-   
-   @Autowired
-   private OrderMessageProducer orderMessageProducer;
+   private CommandGateway commandGateway;
+
 
    @Autowired
-   private RestTemplate restTemplate;
+   private OrderSummaryRepository orderSummaryRepository;
 
 
-   // GET semua order
-   @GetMapping
-   public ResponseEntity<List<Order>> getAllOrders() {
-        List<Order> orders = orderService.getAllOrders();
-        return ResponseEntity.ok(orders);
+    public OrderController(CommandGateway commandGateway, OrderSummaryRepository orderRepository) {
+       this.commandGateway = commandGateway;
+       this.orderSummaryRepository = orderRepository;
    }
-
-
-   // GET order berdasarkan ID dan ambil detail order dari order Service
-   @GetMapping("/{id}")
-   public ResponseEntity<?> getOrderById(@PathVariable Long id) {
-        Order order = orderService.getOrderById(id).orElse(null);
-        if (order == null) {
-            return ResponseEntity.notFound().build();
-        }
-        // Panggil Product Service untuk mendapatkan data produk terkait
-        String productServiceUrl = "http://localhost:8081/api/produk/" + order.getProductId();
-        Produk product = restTemplate.getForObject(productServiceUrl, Produk.class);
-
-
-        OrderResponse response = new OrderResponse();
-        response.setOrder(order);
-        response.setProduct(product);
-        return ResponseEntity.ok(response);
-   }
-
-   // POST buat order baru
+   // Endpoint untuk membuat order (Command)
    @PostMapping
-  public ResponseEntity<Order> createOrder(@RequestBody Order order) {
-      // Set informasi order
-      order.setOrderDate(LocalDateTime.now());
-      order.setOrderStatus("CREATED");
-      Order createdOrder = orderService.createOrder(order);
-    
-      // Buat dan kirim event
-      OrderCreatedEvent event = new OrderCreatedEvent(
-          createdOrder.getId(),
-          createdOrder.getProductId(),
-          createdOrder.getQuantity(),
-          createdOrder.getOrderDate(),
-          createdOrder.getOrderStatus()
-      );
-      orderMessageProducer.sendOrderCreatedEvent(event);
-    
-      return ResponseEntity.ok(createdOrder);
-  }
-
-
-
-   // PUT update order
-   @PutMapping("/{id}")
-   public ResponseEntity<Order> updateOrder(@PathVariable Long id, @RequestBody Order orderDetails) {
-        try {
-            Order updatedOrder = orderService.updateOrder(id, orderDetails);
-            return ResponseEntity.ok(updatedOrder);
-        } catch (RuntimeException ex) {
-            return ResponseEntity.notFound().build();
-        }
+   public OrderSummary createOrder(@RequestBody CreateOrderRequest request) {
+       String orderId = UUID.randomUUID().toString();
+       CreateOrderCommand command = new CreateOrderCommand(orderId, request.getProductId(), request.getQuantity());
+       commandGateway.sendAndWait(command);
+       // Ambil data order yang baru dibuat dari database
+   return orderSummaryRepository.findById(orderId).orElse(null);
    }
 
 
-   // DELETE order
-   @DeleteMapping("/{id}")
-   public ResponseEntity<?> deleteOrder(@PathVariable Long id) {
-        try {
-            orderService.deleteOrder(id);
-            return ResponseEntity.ok("Order deleted successfully");
-        } catch (RuntimeException ex) {
-            return ResponseEntity.notFound().build();
-        }
+   // Endpoint untuk memperbarui order (Command)
+   @PutMapping("/{orderId}")
+   public String updateOrder(@PathVariable String orderId, @RequestBody UpdateOrderRequest request) {
+       UpdateOrderCommand command = new UpdateOrderCommand(orderId, request.getProductId(), request.getQuantity(), request.getOrderStatus());
+       commandGateway.sendAndWait(command);
+       return orderId;
    }
 }
